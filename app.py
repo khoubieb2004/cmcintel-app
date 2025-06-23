@@ -40,18 +40,25 @@ def get_pubmed_citations(query, max_results=10):
         "retmax": max_results,
         "sort": "relevance"
     }
-    search_resp = requests.get(base_url, params=search_params)
-    xml_root = ElementTree.fromstring(search_resp.content)
-    ids = [id_elem.text for id_elem in xml_root.findall(".//Id")]
+    try:
+        search_resp = requests.get(base_url, params=search_params)
+        xml_root = ElementTree.fromstring(search_resp.content)
+        ids = [id_elem.text for id_elem in xml_root.findall(".//Id")]
+    except Exception:
+        return [("PubMed search failed or returned invalid XML.", "https://pubmed.ncbi.nlm.nih.gov")]
+
     citations = []
     for pmid in ids:
-        summary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-        summary_params = {"db": "pubmed", "id": pmid, "retmode": "xml"}
-        summary_resp = requests.get(summary_url, params=summary_params)
-        summary_root = ElementTree.fromstring(summary_resp.content)
-        title_elem = summary_root.find(".//Item[@Name='Title']")
-        if title_elem is not None:
-            citations.append((title_elem.text, f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"))
+        try:
+            summary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+            summary_params = {"db": "pubmed", "id": pmid, "retmode": "xml"}
+            summary_resp = requests.get(summary_url, params=summary_params)
+            summary_root = ElementTree.fromstring(summary_resp.content)
+            title_elem = summary_root.find(".//Item[@Name='Title']")
+            if title_elem is not None:
+                citations.append((title_elem.text, f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"))
+        except Exception:
+            continue
     return citations
 
 # --- SIDEBAR FORM ---
@@ -84,17 +91,15 @@ if st.sidebar.button("Generate Justification"):
 st.markdown("---")
 st.header("📂 Batch Upload")
 
-st.markdown("### 📥 Download Sample CSV")
+# Downloadable CSV template
 with open("CMCIntel_Batch_Template.csv", "rb") as file:
-    st.download_button("📄 Download Template", file, file_name="CMCIntel_Batch_Template.csv")
-
-st.markdown("""
-**📝 Instructions:**
-- Accepted file format: `.csv`
-- Each row = one excipient justification
-- **Required columns**: `Drug Name`, `Excipient`, `Formulation Type`, `Excipient Role`, `Concerns`
-- You can leave `Concerns` empty if not needed
-""")
+    st.download_button(
+        label="📄 Download Sample CSV",
+        data=file,
+        file_name="CMCIntel_Batch_Template.csv",
+        mime="text/csv"
+    )
+st.caption("Download the sample CSV, fill it with your data, then upload below.")
 
 batch_file = st.file_uploader("Upload CSV", type=["csv"])
 
