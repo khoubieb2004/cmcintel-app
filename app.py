@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -84,6 +83,19 @@ if st.sidebar.button("Generate Justification"):
 # --- BATCH MODE ---
 st.markdown("---")
 st.header("📂 Batch Upload")
+
+st.markdown("### 📥 Download Sample CSV")
+with open("CMCIntel_Batch_Template.csv", "rb") as file:
+    st.download_button("📄 Download Template", file, file_name="CMCIntel_Batch_Template.csv")
+
+st.markdown("""
+**📝 Instructions:**
+- Accepted file format: `.csv`
+- Each row = one excipient justification
+- **Required columns**: `Drug Name`, `Excipient`, `Formulation Type`, `Excipient Role`, `Concerns`
+- You can leave `Concerns` empty if not needed
+""")
+
 batch_file = st.file_uploader("Upload CSV", type=["csv"])
 
 if batch_file:
