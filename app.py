@@ -3,10 +3,11 @@ import pandas as pd
 import requests
 from xml.etree import ElementTree
 import google.generativeai as genai
+import time
 
 # --- CONFIG ---
 st.set_page_config(page_title="CMCIntel Justifier", layout="centered")
-st.title("🧪 CMCIntel - AI Excipient Justification")
+st.title("🧪 CMCIntel - AI Excipient Justification for Oral Dosage Forms")
 
 # --- SETUP ---
 GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
@@ -16,7 +17,7 @@ gemini = genai.GenerativeModel("gemini-1.5-flash-latest")
 # --- PROMPT TEMPLATE ---
 prompt_template = """
 You are a senior CMC regulatory writer with expertise in ICH, FDA, and EMA guidelines.
-Your task is to generate a high-quality, regulatory-compliant justification for the use of this excipient in a drug product formulation.
+Your task is to generate a high-quality, regulatory-compliant justification for the use of this excipient in an oral drug product formulation.
 Input:
 - Drug name: {drug_name}
 - Excipient: {excipient}
@@ -24,10 +25,11 @@ Input:
 - Role of excipient: {excipient_role}
 - Concerns or questions to address: {concerns}
 Output:
-1. A scientifically sound justification (100-150 words)
+1. A scientifically sound justification (100-150 words) or a response if no valid justification exists
 2. Include references to ICH Q8/Q9/Q10 where appropriate
 3. Add 10 PubMed citations with summary bullet points if available
-4. Tone: formal, precise, submission-ready
+4. If the justification is weak or unsupported by literature, clearly state this and provide reasoning
+5. Tone: formal, precise, submission-ready
 """
 
 # --- PUBMED FUNCTION ---
@@ -59,15 +61,16 @@ def get_pubmed_citations(query, max_results=10):
                 citations.append((title_elem.text, f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"))
         except Exception:
             continue
+        time.sleep(0.5)
     return citations
 
 # --- SIDEBAR FORM ---
-st.sidebar.header("Excipient Entry")
+st.sidebar.header("Excipient Entry (Oral Dosage Form Only)")
 drug_name = st.sidebar.text_input("Drug Name")
 excipient = st.sidebar.text_input("Excipient")
-formulation_type = st.sidebar.selectbox("Formulation Type", ["IR tablet", "SR capsule", "Oral solution", "Parenteral injection"])
-excipient_role = st.sidebar.selectbox("Excipient Role", ["Diluent", "Binder", "Disintegrant", "Lubricant", "Co-solvent", "Stabilizer"])
-concerns = st.sidebar.text_area("Concerns (optional)")
+formulation_type = st.sidebar.selectbox("Formulation Type", ["Immediate-release tablet", "Sustained-release capsule", "Oral solution", "Chewable tablet", "Oral suspension"])
+excipient_role = st.sidebar.text_area("Role of Excipient (e.g., Binder to improve tablet cohesion, Lubricant to aid in tablet ejection)")
+concerns = st.sidebar.text_area("Concerns (e.g., stability under heat, poor compressibility)")
 
 if st.sidebar.button("Generate Justification"):
     with st.spinner("Generating..."):
@@ -79,9 +82,9 @@ if st.sidebar.button("Generate Justification"):
             concerns=concerns
         )
         output = gemini.generate_content(prompt)
-        citations = get_pubmed_citations(f"{excipient} pharmaceutical formulation")
-        st.success("✅ Justification Generated!")
-        st.subheader("📄 Justification:")
+        citations = get_pubmed_citations(f"{excipient} {formulation_type} {excipient_role}")
+        st.success("✅ Response Generated!")
+        st.subheader("📄 Justification or Scientific Rejection:")
         st.write(output.text)
         st.subheader("🔗 PubMed References:")
         for i, (title, link) in enumerate(citations, 1):
@@ -91,7 +94,6 @@ if st.sidebar.button("Generate Justification"):
 st.markdown("---")
 st.header("📂 Batch Upload")
 
-# Downloadable CSV template
 with open("CMCIntel_Batch_Template.csv", "rb") as file:
     st.download_button(
         label="📄 Download Sample CSV",
@@ -99,7 +101,7 @@ with open("CMCIntel_Batch_Template.csv", "rb") as file:
         file_name="CMCIntel_Batch_Template.csv",
         mime="text/csv"
     )
-st.caption("Download the sample CSV, fill it with your data, then upload below.")
+st.caption("Ensure your input is limited to oral dosage forms. Suggested fields: 'Binder to improve compaction', 'Lubricant for manufacturing ease', etc.")
 
 batch_file = st.file_uploader("Upload CSV", type=["csv"])
 
@@ -117,6 +119,6 @@ if batch_file:
         )
         out = gemini.generate_content(prompt)
         st.write(out.text)
-        refs = get_pubmed_citations(f"{row['Excipient']} pharmaceutical formulation")
+        refs = get_pubmed_citations(f"{row['Excipient']} {row['Formulation Type']} {row['Excipient Role']}")
         for i, (title, link) in enumerate(refs, 1):
             st.markdown(f"{i}. [{title}]({link})")
