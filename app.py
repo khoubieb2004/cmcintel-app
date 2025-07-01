@@ -3,11 +3,40 @@ import pandas as pd
 import requests
 from xml.etree import ElementTree
 import google.generativeai as genai
-from functools import lru_cache
+from streamlit_extras.stylable_container import stylable_container
 
 # --- CONFIG ---
 st.set_page_config(page_title="CMCIntel Justifier", layout="wide")
-st.title("🧪 CMCIntel – AI Excipient Justification for Oral Dosage Forms")
+st.markdown("""
+    <style>
+    .stApp {
+        background-color: #f4f6f9;
+        font-family: 'Segoe UI', sans-serif;
+    }
+    .block-container {
+        padding: 2rem;
+    }
+    .css-1v0mbdj {  /* stTextInput */
+        border: 1px solid #ccc;
+        border-radius: 8px;
+    }
+    .stButton button {
+        background-color: #2c6e49;
+        color: white;
+        font-weight: bold;
+        border-radius: 6px;
+        padding: 0.5em 1.5em;
+    }
+    .stButton button:hover {
+        background-color: #228b22;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("🧪 CMCIntel - AI Excipient Justifier for Oral Formulations")
+st.write("""
+This tool generates regulatory-compliant justifications for excipients in oral drug formulations, supported by live PubMed references.
+""")
 
 # --- SETUP ---
 GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
@@ -17,7 +46,7 @@ gemini = genai.GenerativeModel("gemini-1.5-flash-latest")
 # --- PROMPT TEMPLATE ---
 prompt_template = """
 You are a senior CMC regulatory writer with expertise in ICH, FDA, and EMA guidelines.
-Your task is to generate a high-quality, regulatory-compliant justification for the use of this excipient in an oral drug product formulation.
+Your task is to generate a high-quality, regulatory-compliant justification for the use of this excipient in a drug product formulation.
 Input:
 - Drug name: {drug_name}
 - Excipient: {excipient}
@@ -25,88 +54,86 @@ Input:
 - Role of excipient: {excipient_role}
 - Concerns or questions to address: {concerns}
 Output:
-1. A scientifically sound justification (100–150 words)
+1. A scientifically sound justification (100-150 words)
 2. Include references to ICH Q8/Q9/Q10 where appropriate
-3. Add at least 10 PubMed citations with summary bullet points
-4. If justification cannot be made, explain clearly with scientific reasoning
-5. Tone: formal, precise, submission-ready
+3. Add 10 PubMed citations with summary bullet points if available
+4. Tone: formal, precise, submission-ready
 """
 
-# --- PubMed Citation Retrieval ---
-@lru_cache(maxsize=128)
+# --- PUBMED FUNCTION ---
+@st.cache_data(show_spinner=False)
 def get_pubmed_citations(query, max_results=10):
+    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    search_params = {
+        "db": "pubmed",
+        "term": query,
+        "retmode": "xml",
+        "retmax": max_results,
+        "sort": "relevance"
+    }
     try:
-        base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-        search_params = {
-            "db": "pubmed",
-            "term": query,
-            "retmode": "xml",
-            "retmax": max_results,
-            "sort": "relevance"
-        }
         search_resp = requests.get(base_url, params=search_params)
         xml_root = ElementTree.fromstring(search_resp.content)
         ids = [id_elem.text for id_elem in xml_root.findall(".//Id")]
-
-        citations = []
-        for pmid in ids:
-            summary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-            summary_params = {"db": "pubmed", "id": pmid, "retmode": "xml"}
-            summary_resp = requests.get(summary_url, params=summary_params)
-            try:
-                summary_root = ElementTree.fromstring(summary_resp.content)
-                title_elem = summary_root.find(".//Item[@Name='Title']")
-                if title_elem is not None:
-                    citations.append((title_elem.text, f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"))
-            except Exception:
-                continue
-        return citations
     except Exception:
         return []
 
-# --- SIDEBAR FORM ---
-st.sidebar.header("Excipient Justification Input")
-drug_name = st.sidebar.text_input("Drug Name", placeholder="e.g., Metformin")
-excipient = st.sidebar.text_input("Excipient", placeholder="e.g., Croscarmellose Sodium")
-formulation_type = st.sidebar.text_input("Formulation Type (oral only)", placeholder="e.g., IR tablet")
-excipient_role = st.sidebar.text_input("Role of Excipient", placeholder="e.g., Superdisintegrant for rapid breakdown")
-concerns = st.sidebar.text_area("Concerns or Questions (optional)", placeholder="e.g., Risk of reduced flowability or chemical instability")
+    citations = []
+    for pmid in ids:
+        try:
+            summary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+            summary_params = {"db": "pubmed", "id": pmid, "retmode": "xml"}
+            summary_resp = requests.get(summary_url, params=summary_params)
+            summary_root = ElementTree.fromstring(summary_resp.content)
+            title_elem = summary_root.find(".//Item[@Name='Title']")
+            if title_elem is not None:
+                citations.append((title_elem.text, f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"))
+        except Exception:
+            continue
+    return citations
 
-if st.sidebar.button("Generate Justification"):
-    if not all([drug_name, excipient, formulation_type, excipient_role]):
-        st.error("Please fill in all required fields.")
-    else:
-        with st.spinner("Generating scientific justification..."):
-            prompt = prompt_template.format(
-                drug_name=drug_name,
-                excipient=excipient,
-                formulation_type=formulation_type,
-                excipient_role=excipient_role,
-                concerns=concerns
-            )
-            output = gemini.generate_content(prompt)
-            st.success("✅ Justification Generated!")
-            st.subheader("📄 Scientific Justification:")
-            st.write(output.text)
-            st.subheader("🔗 Supporting PubMed References:")
-            citations = get_pubmed_citations(f"{excipient} oral formulation")
-            if citations:
-                for i, (title, link) in enumerate(citations, 1):
-                    st.markdown(f"**{i}.** [{title}]({link})")
-            else:
-                st.info("No PubMed citations could be retrieved. Please verify the excipient name or try again later.")
+# --- SINGLE ENTRY ---
+st.sidebar.header("🧾 Excipient Entry Form")
+drug_name = st.sidebar.text_input("Drug Name")
+excipient = st.sidebar.text_input("Excipient")
+formulation_type = st.sidebar.text_input("Formulation Type (e.g. IR Tablet, SR Capsule)")
+excipient_role = st.sidebar.text_area("Excipient Role", placeholder="e.g. Binder to improve tablet cohesion")
+concerns = st.sidebar.text_area("Concerns (optional)", placeholder="e.g. Stability under heat, poor compressibility")
+
+if st.sidebar.button("✨ Generate Justification"):
+    with st.spinner("Generating regulatory justification and references..."):
+        prompt = prompt_template.format(
+            drug_name=drug_name,
+            excipient=excipient,
+            formulation_type=formulation_type,
+            excipient_role=excipient_role,
+            concerns=concerns
+        )
+        output = gemini.generate_content(prompt)
+        citations = get_pubmed_citations(f"{excipient} oral pharmaceutical formulation")
+        st.success("✅ Justification Complete")
+
+        with stylable_container("card1", css_styles="background: white; padding: 1rem; border-radius: 10px; margin-bottom: 1rem"):
+            st.subheader("📄 Justification")
+            st.markdown(output.text)
+
+        with stylable_container("card2", css_styles="background: #f0f4f8; padding: 1rem; border-radius: 10px"):
+            st.subheader("🔗 PubMed References")
+            for i, (title, link) in enumerate(citations, 1):
+                st.markdown(f"**{i}.** [{title}]({link})")
 
 # --- BATCH MODE ---
 st.markdown("---")
-st.header("📂 Batch Upload for Multiple Justifications")
-batch_file = st.file_uploader("Upload CSV", type=["csv"])
-st.markdown("[📥 Download Sample Template](https://cmcintel.streamlit.app/sample/CMCIntel_Batch_Template.csv)")
+st.header("📂 Batch Upload Mode")
+st.markdown("[📥 Download CSV Template](https://cmcintel.streamlit.app/sample/CMCIntel_Batch_Template.csv)")
+batch_file = st.file_uploader("Upload your CSV file", type=["csv"])
 
 if batch_file:
     df = pd.read_csv(batch_file)
-    st.success(f"Uploaded {len(df)} entries. Generating justifications...")
+    st.success(f"Uploaded {len(df)} entries")
     for _, row in df.iterrows():
-        with st.expander(f"{row['Drug Name']} - {row['Excipient']}"):
+        with stylable_container("batch_card", css_styles="background: white; padding: 1rem; border-radius: 10px; margin-bottom: 1rem"):
+            st.subheader(f"🧾 {row['Drug Name']} – {row['Excipient']}")
             prompt = prompt_template.format(
                 drug_name=row["Drug Name"],
                 excipient=row["Excipient"],
@@ -114,18 +141,9 @@ if batch_file:
                 excipient_role=row["Excipient Role"],
                 concerns=row["Concerns"]
             )
-            out = gemini.generate_content(prompt)
-            st.write(out.text)
-            refs = get_pubmed_citations(f"{row['Excipient']} oral formulation")
+            output = gemini.generate_content(prompt)
+            st.markdown(output.text)
+            refs = get_pubmed_citations(f"{row['Excipient']} oral pharmaceutical formulation")
+            st.subheader("🔗 PubMed References")
             for i, (title, link) in enumerate(refs, 1):
                 st.markdown(f"{i}. [{title}]({link})")
-
-# --- CUSTOM CSS ---
-st.markdown("""
-    <style>
-    .reportview-container .main .block-container{ padding-top: 2rem; padding-bottom: 2rem; }
-    .sidebar .sidebar-content { background-color: #f5f5f5; }
-    h1, h2, h3, h4 { color: #003262; }
-    .stButton > button { background-color: #004080; color: white; border-radius: 8px; }
-    </style>
-""", unsafe_allow_html=True)
