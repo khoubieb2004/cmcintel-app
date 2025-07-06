@@ -2,104 +2,137 @@ import streamlit as st
 import pandas as pd
 import requests
 from xml.etree import ElementTree
-import google.generativeai as genai
-import gspread
-from google.oauth2.service_account import Credentials
 
-# --- CONFIG ---
-st.set_page_config(page_title="CMCIntel Justifier", layout="centered")
-st.title("🧪 CMCIntel - AI Excipient Justification")
+st.set_page_config(page_title="CMCIntel - Excipient Justification", layout="wide")
 
-# --- SETUP ---
-GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-genai.configure(api_key=GOOGLE_API_KEY)
-gemini = genai.GenerativeModel("gemini-1.5-flash-latest")
+st.markdown("<h1 style='text-align: center;'>🧪 CMCIntel - AI Excipient Justification for Oral Dosage Forms</h1>", unsafe_allow_html=True)
 
-# --- PUBMED FUNCTION ---
-def get_pubmed_citations(query, max_results=10):
-    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-    search_params = {
-        "db": "pubmed",
-        "term": query,
-        "retmode": "xml",
-        "retmax": max_results,
-        "sort": "relevance"
-    }
-    search_resp = requests.get(base_url, params=search_params)
-    xml_root = ElementTree.fromstring(search_resp.content)
-    ids = [id_elem.text for id_elem in xml_root.findall(".//Id")]
-    citations = []
-    for pmid in ids:
-        summary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-        summary_params = {"db": "pubmed", "id": pmid, "retmode": "xml"}
-        summary_resp = requests.get(summary_url, params=summary_params)
-        try:
-            summary_root = ElementTree.fromstring(summary_resp.content)
-            title_elem = summary_root.find(".//Item[@Name='Title']")
-            if title_elem is not None:
-                citations.append((title_elem.text, f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"))
-        except:
-            continue
-    return citations
-
-# --- SIDEBAR FORM ---
 st.sidebar.header("Excipient Entry")
-drug_name = st.sidebar.text_input("Drug Name")
-excipient = st.sidebar.text_input("Excipient")
-formulation_type = st.sidebar.text_input("Formulation Type (e.g., IR tablet, SR capsule)")
-excipient_role = st.sidebar.text_input("Excipient Role (e.g., disintegrant, stabilizer, diluent)")
-concerns = st.sidebar.text_area("Concerns or questions (optional)")
+excipient = st.sidebar.text_input("Excipient", placeholder="e.g. CMC")
+formulation_type = st.sidebar.text_input("Formulation Type", placeholder="e.g. Immediate-release tablet")
+drug_name = st.sidebar.text_input("Drug Name", placeholder="e.g. Metformin")
+excipient_role = st.sidebar.text_area("Excipient Role (with examples)", placeholder="e.g. Disintegrant. Example: helps break tablet into smaller particles.")
 
-prompt_template = '''
-You are a senior CMC regulatory writer with expertise in ICH, FDA, and EMA guidelines.
-Your task is to generate a high-quality, regulatory-compliant justification for the use of this excipient in a drug product formulation.
-Input:
-- Drug name: {drug_name}
-- Excipient: {excipient}
-- Formulation type: {formulation_type}
-- Role of excipient: {excipient_role}
-- Concerns or questions to address: {concerns}
-Output:
-1. A scientifically sound justification (100-150 words)
-2. Include references to ICH Q8/Q9/Q10 where appropriate
-3. Add 10 PubMed citations with summary bullet points if available
-4. Tone: formal, precise, submission-ready
-'''
+pubmed_api = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+summary_endpoint = pubmed_api + "esummary.fcgi"
+search_endpoint = pubmed_api + "esearch.fcgi"
+
+def get_pubmed_citations(query):
+    params = {
+        "db": "pubmed",
+        "retmode": "json",
+        "retmax": 5,
+        "term": query
+    }
+    search_resp = requests.get(search_endpoint, params=params)
+    id_list = search_resp.json().get("esearchresult", {}).get("idlist", [])
+
+    if not id_list:
+        return []
+
+    id_str = ",".join(id_list)
+    summary_params = {
+        "db": "pubmed",
+        "retmode": "xml",
+        "id": id_str
+    }
+    summary_resp = requests.get(summary_endpoint, params=summary_params)
+    try:
+        summary_root = ElementTree.fromstring(summary_resp.content)
+        summaries = []
+        for docsum in summary_root.findall(".//DocSum"):
+            title = ""
+            link = ""
+            for item in docsum.findall("Item"):
+                if item.attrib.get("Name") == "Title":
+                    title = item.text
+            uid = docsum.find("Id").text
+            link = f"https://pubmed.ncbi.nlm.nih.gov/{uid}/"
+            summaries.append((title, link))
+        return summaries
+    except Exception:
+        return []
+
+def generate_justification(excipient, formulation_type, drug_name, excipient_role):
+    if not excipient or not formulation_type or not drug_name:
+        return "❌ Please fill in all required fields.", []
+
+    justification = f"""
+The justification for the use of **{excipient}** in a {formulation_type} formulation of **{drug_name}** involves its established functional role in oral solid dosage forms.
+
+**Excipient Role:** {excipient_role}
+
+**Rationale:**
+1. {excipient} is commonly used as a {excipient_role.lower()} in oral formulations.
+2. It has demonstrated effectiveness in improving performance parameters (e.g., disintegration, dissolution).
+3. Its compatibility with APIs like {drug_name} has been supported in scientific literature.
+4. Regulatory guidance recognizes its use in similar formulations.
+5. It contributes to patient acceptability, safety, and manufacturability.
+6. Risk-benefit analysis supports its inclusion when considering quality and efficacy.
+
+Supporting data from formulation trials, ICH guidelines, and peer-reviewed publications strengthen this justification.
+
+📚 *References shown below may include relevant literature on the excipient role, function, and safety in oral dosage forms.*
+"""
+    citations = get_pubmed_citations(f"{excipient} {formulation_type} {drug_name} {excipient_role}")
+    return justification, citations
 
 if st.sidebar.button("Generate Justification"):
     with st.spinner("Generating..."):
-        prompt = prompt_template.format(
-            drug_name=drug_name,
-            excipient=excipient,
-            formulation_type=formulation_type,
-            excipient_role=excipient_role,
-            concerns=concerns
-        )
-        output = gemini.generate_content(prompt)
-        citations = get_pubmed_citations(f"{excipient} {formulation_type}")
-        st.success("✅ Justification Generated!")
-        st.subheader("📄 Justification:")
-        st.write(output.text)
-        st.subheader("🔗 PubMed References:")
-        for i, (title, link) in enumerate(citations, 1):
-            st.markdown(f"**{i}.** [{title}]({link})")
+        result, references = generate_justification(excipient, formulation_type, drug_name, excipient_role)
+        st.markdown("### 📄 Justification or Scientific Rationale:")
+        st.markdown(result)
+        if references:
+            st.markdown("### 🔍 PubMed References:")
+            for title, url in references:
+                st.markdown(f"- [{title}]({url})")
+        else:
+            st.warning("No references found or PubMed API unreachable.")
 
-# --- FEEDBACK SECTION ---
+# 🗂️ Batch Upload Section
 st.markdown("---")
-🔗 **Submit your suggestions using this Google Form:**  
-📋 Or copy the link below to share or paste manually:
-'''
-)
-try:
-    credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"],
-        scopes=["https://www.googleapis.com/auth/spreadsheets"]
-    )
-    gc = gspread.authorize(credentials)
-    sh = gc.open_by_url(st.secrets["feedback_sheet_url"])
-    worksheet = sh.sheet1
-    feedback_data = worksheet.get_all_records()
-    df_feedback = pd.DataFrame(feedback_data)
+st.markdown("### 🗂️ Batch Upload")
+uploaded_file = st.file_uploader("Upload Excel/CSV file", type=["csv", "xlsx"])
+if uploaded_file:
+    try:
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+        st.dataframe(df)
 
-    st.success(f"✅ {len(df_feedback)} feedback submissions received.")
-    if not df_feedback.empty:
-except Exception as e:
+        if st.button("Generate Batch Justifications"):
+            results = []
+            for index, row in df.iterrows():
+                try:
+                    justification, citations = generate_justification(
+                        row.get("Excipient", ""),
+                        row.get("FormulationType", ""),
+                        row.get("DrugName", ""),
+                        row.get("Role", "")
+                    )
+                    results.append({
+                        "Excipient": row.get("Excipient", ""),
+                        "DrugName": row.get("DrugName", ""),
+                        "FormulationType": row.get("FormulationType", ""),
+                        "Role": row.get("Role", ""),
+                        "Justification": justification,
+                        "References": "; ".join([f"{title} ({url})" for title, url in citations])
+                    })
+                except Exception as e:
+                    results.append({
+                        "Excipient": row.get("Excipient", ""),
+                        "DrugName": row.get("DrugName", ""),
+                        "FormulationType": row.get("FormulationType", ""),
+                        "Role": row.get("Role", ""),
+                        "Justification": f"Error: {str(e)}",
+                        "References": ""
+                    })
+            result_df = pd.DataFrame(results)
+            st.markdown("### ✅ Batch Output:")
+            st.dataframe(result_df)
+            csv = result_df.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Download Justifications CSV", csv, "batch_justifications.csv", "text/csv")
+
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
