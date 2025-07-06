@@ -42,14 +42,7 @@ def get_pubmed_citations(query, max_results=10):
             continue
     return citations
 
-# --- SIDEBAR FORM ---
-st.sidebar.header("Excipient Entry")
-drug_name = st.sidebar.text_input("Drug Name")
-excipient = st.sidebar.text_input("Excipient")
-formulation_type = st.sidebar.text_input("Formulation Type (e.g., IR tablet, SR capsule)")
-excipient_role = st.sidebar.text_input("Excipient Role (e.g., disintegrant, stabilizer, diluent)")
-concerns = st.sidebar.text_area("Concerns or questions (optional)")
-
+# --- FORM TEMPLATE ---
 prompt_template = '''
 You are a senior CMC regulatory writer with expertise in ICH, FDA, and EMA guidelines.
 Your task is to generate a high-quality, regulatory-compliant justification for the use of this excipient in a drug product formulation.
@@ -65,6 +58,14 @@ Output:
 3. Add 10 PubMed citations with summary bullet points if available
 4. Tone: formal, precise, submission-ready
 '''
+
+# --- SIDEBAR FORM ---
+st.sidebar.header("Excipient Entry")
+drug_name = st.sidebar.text_input("Drug Name")
+excipient = st.sidebar.text_input("Excipient")
+formulation_type = st.sidebar.text_input("Formulation Type (e.g., IR tablet, SR capsule, chewable, buccal, etc.)")
+excipient_role = st.sidebar.text_input("Excipient Role (e.g., disintegrant, stabilizer, diluent)")
+concerns = st.sidebar.text_area("Concerns or questions (optional)")
 
 if st.sidebar.button("Generate Justification"):
     with st.spinner("Generating..."):
@@ -84,6 +85,32 @@ if st.sidebar.button("Generate Justification"):
         for i, (title, link) in enumerate(citations, 1):
             st.markdown(f"**{i}.** [{title}]({link})")
 
+# --- BATCH UPLOAD ---
+st.markdown("---")
+st.subheader("📂 Batch Upload")
+st.markdown("Upload a CSV file with columns: `Drug Name`, `Excipient`, `Formulation Type`, `Excipient Role`, `Concerns`")
+batch_file = st.file_uploader("Upload CSV", type="csv")
+if batch_file is not None:
+    df = pd.read_csv(batch_file)
+    st.dataframe(df)
+    if st.button("Generate Batch Justifications"):
+        with st.spinner("Processing batch..."):
+            for index, row in df.iterrows():
+                st.markdown(f"---\n### Justification for: **{row['Excipient']} in {row['Drug Name']}**")
+                prompt = prompt_template.format(
+                    drug_name=row['Drug Name'],
+                    excipient=row['Excipient'],
+                    formulation_type=row['Formulation Type'],
+                    excipient_role=row['Excipient Role'],
+                    concerns=row.get('Concerns', '')
+                )
+                result = gemini.generate_content(prompt)
+                st.write(result.text)
+                citations = get_pubmed_citations(f"{row['Excipient']} {row['Formulation Type']}")
+                st.subheader("🔗 PubMed References:")
+                for i, (title, link) in enumerate(citations, 1):
+                    st.markdown(f"**{i}.** [{title}]({link})")
+
 # --- FEEDBACK SECTION ---
 st.markdown("---")
 st.markdown("### 📬 Feedback & Suggestions")
@@ -100,6 +127,7 @@ We would love your feedback to help improve this app!
 feedback_link = "https://docs.google.com/forms/d/e/1FAIpQLSca_xkR3UAPVOZKUwKa1X9MH_4lEftPgRh61UZt5M8J9izGKA/viewform"
 st.code(feedback_link, language='text')
 
+# --- FEEDBACK DISPLAY FROM GOOGLE SHEET ---
 try:
     credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"],
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
@@ -113,7 +141,4 @@ try:
     st.success(f"✅ {len(df_feedback)} feedback submissions received.")
     if not df_feedback.empty:
         st.markdown("#### 📝 Anonymous Feedback Overview")
-        st.dataframe(df_feedback)
-
-except Exception as e:
-    st.warning("Feedback summary not available. Please check Google Sheet connection.")
+        st.dataframe(
