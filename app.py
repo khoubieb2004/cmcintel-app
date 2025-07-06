@@ -90,9 +90,6 @@ st.markdown("---")
 📋 Or copy the link below to share or paste manually:
 '''
 )
-feedback_link = "https://docs.google.com/forms/d/e/1FAIpQLSca_xkR3UAPVOZKUwKa1X9MH_4lEftPgRh61UZt5M8J9izGKA/viewform"
-st.code(feedback_link, language='text')
-
 try:
     credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"],
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
@@ -105,8 +102,4 @@ try:
 
     st.success(f"✅ {len(df_feedback)} feedback submissions received.")
     if not df_feedback.empty:
-        st.markdown("#### 📝 Anonymous Feedback Overview")
-        st.dataframe(df_feedback)
-
 except Exception as e:
-    st.warning("Feedback summary not available. Please check Google Sheet connection.")
