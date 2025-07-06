@@ -92,6 +92,22 @@ if st.sidebar.button("Generate Justification"):
 # 🗂️ Batch Upload Section
 st.markdown("---")
 st.markdown("### 🗂️ Batch Upload")
+
+# Sample file download link
+sample_data = pd.DataFrame({
+    "Excipient": ["CMC"],
+    "FormulationType": ["Immediate-release tablet"],
+    "DrugName": ["Metformin"],
+    "Role": ["Disintegrant"]
+})
+sample_csv = sample_data.to_csv(index=False).encode("utf-8")
+st.download_button(
+    label="📄 Download Sample CSV Template",
+    data=sample_csv,
+    file_name="sample_excipient_input.csv",
+    mime="text/csv"
+)
+
 uploaded_file = st.file_uploader("Upload Excel/CSV file", type=["csv", "xlsx"])
 if uploaded_file:
     try:
