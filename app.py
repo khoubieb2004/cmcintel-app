@@ -141,4 +141,4 @@ try:
     st.success(f"✅ {len(df_feedback)} feedback submissions received.")
     if not df_feedback.empty:
         st.markdown("#### 📝 Anonymous Feedback Overview")
-        st.dataframe(
+        st.dataframe(df)
