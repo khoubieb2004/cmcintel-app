@@ -2,82 +2,101 @@ import streamlit as st
 import pandas as pd
 import requests
 from xml.etree import ElementTree
-from google.oauth2 import service_account
+import base64
+
+# Patch for Iterable import in gsheetsdb
+try:
+    from collections.abc import Iterable
+except ImportError:
+    from collections import Iterable
+
 from gsheetsdb import connect
 
-st.set_page_config(page_title="CMCIntel - AI Excipient Justification", layout="wide")
+# Google Sheet feedback config
+conn = connect()
 
-st.markdown("""
-    <style>
-        .main {background-color: #f7f9fb;}
-        h1, h2, h3 {color: #2c3e50;}
-        .stButton>button {
-            background-color: #4CAF50; 
-            color: white; 
-            border: none;
-            padding: 0.5em 1em;
-            border-radius: 5px;
-        }
-        .stTextInput>div>div>input {
-            border: 1px solid #ccc;
-            border-radius: 5px;
-        }
-    </style>
-""", unsafe_allow_html=True)
+# App title and branding
+st.markdown("<h1 style='text-align: center;'>🧪 CMCIntel - AI Excipient Justification</h1>", unsafe_allow_html=True)
+st.markdown("---")
 
-st.title("🧪 CMCIntel - AI Excipient Justification")
-st.markdown("Justification Generator for **Oral Dosage Forms**")
+# Sidebar input for Single Justification
+st.sidebar.header("🧾 Excipient Entry (Oral Dosage Form Only)")
+with st.sidebar.form(key="excipient_form"):
+    drug = st.text_input("Drug (e.g., Metformin)")
+    excipient = st.text_input("Excipient (e.g., MCC)")
+    formulation_type = st.text_input("Formulation Type (e.g., Immediate-release tablet)")
+    role = st.text_input("Excipient Role (e.g., Disintegrant)")
+    example = st.text_area("Example Justification or Concern")
+    submit_button = st.form_submit_button(label="Generate Justification")
 
-# Input Section
-with st.sidebar:
-    st.header("Excipient Entry")
-    dosage_form = st.text_input("Oral Dosage Form (e.g. Tablet, Capsule)", "Tablet")
-    excipient = st.text_input("Excipient", "Microcrystalline Cellulose")
-    formulation_type = st.text_input("Formulation Type", "Immediate-release tablet")
-    justification_focus = st.text_area("Excipient Role / Justification Focus", "Binder and filler, improves tablet strength")
+# Batch Upload
+st.markdown("### 📦 Batch Upload")
+uploaded_file = st.file_uploader("Upload a CSV file with columns: Drug, Excipient, FormulationType, Role, Example", type="csv")
 
-    st.markdown("---")
-    st.markdown("📤 **Batch Upload**")
-    batch_file = st.file_uploader("Upload a CSV file", type=["csv"])
-    st.download_button("📥 Download Sample CSV", data=open("CMCIntel_Batch_Template.csv", "rb"), file_name="CMCIntel_Batch_Template.csv")
+# PubMed Citation Generator
+def get_pubmed_citations(query, count=10):
+    search_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    fetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+    params = {
+        "db": "pubmed",
+        "retmode": "json",
+        "retmax": count,
+        "term": query
+    }
+    search = requests.get(search_url, params=params).json()
+    ids = search.get("esearchresult", {}).get("idlist", [])
+    if not ids:
+        return []
 
-# Main Form - Justification Display
-def generate_justification(excipient, formulation, role):
-    summary = f"""
-### 🧬 Justification or Scientific Rationale:
+    summaries = []
+    summary_resp = requests.get(fetch_url, params={"db": "pubmed", "retmode": "json", "id": ",".join(ids)}).json()
+    for uid in ids:
+        info = summary_resp.get("result", {}).get(uid, {})
+        title = info.get("title", "No title")
+        url = f"https://pubmed.ncbi.nlm.nih.gov/{uid}/"
+        summaries.append(f"- [{title}]({url})")
+    return summaries
 
-The excipient **{excipient}** is included in the {formulation} to serve as a {role.lower()}.
+# Justification Generator
+def generate_justification(drug, excipient, formulation_type, role, example):
+    header = f"### 📘 Justification or Scientific Rejection:\n"
+    core = f"This justification considers the use of **{excipient}** as a **{role}** in **{formulation_type}** formulation of **{drug}**.\n\n"
+    if not all([drug, excipient, formulation_type, role]):
+        return "❌ Missing input fields. Please complete all sections."
 
-This function supports appropriate product performance, manufacturability, and stability. The inclusion of this excipient aligns with regulatory guidance and QbD principles. Literature supports its safety, compatibility, and effectiveness.
+    citations = get_pubmed_citations(f"{excipient} {formulation_type} {role}")
+    if citations:
+        ref_section = "### 🔍 PubMed References:\n" + "\n".join(citations)
+    else:
+        ref_section = "⚠️ No PubMed citations found. Please check your query for accuracy."
 
-The justification assumes appropriate characterization, pre-formulation, and in-process control have been conducted.
-"""
-    return summary
+    return header + core + ref_section
 
-if st.button("✅ Generate Justification"):
-    st.markdown(generate_justification(excipient, formulation_type, justification_focus))
+# Single Justification Output
+if submit_button and all([drug, excipient, formulation_type, role]):
+    output = generate_justification(drug, excipient, formulation_type, role, example)
+    st.markdown(output, unsafe_allow_html=True)
 
-# Batch mode
-if batch_file:
+# Batch Upload Output
+if uploaded_file:
     try:
-        df = pd.read_csv(batch_file)
-        st.dataframe(df)
-        st.markdown("### 📄 Batch Justifications:")
+        df = pd.read_csv(uploaded_file)
         for index, row in df.iterrows():
-            st.markdown(f"#### 🔹 {row['Excipient']} in {row['Formulation Type']}")
-            st.markdown(generate_justification(row['Excipient'], row['Formulation Type'], row['Justification Focus']))
+            st.markdown("----")
+            st.markdown(f"### Justification {index+1}")
+            output = generate_justification(row['Drug'], row['Excipient'], row['FormulationType'], row['Role'], row['Example'])
+            st.markdown(output, unsafe_allow_html=True)
     except Exception as e:
-        st.error(f"Failed to process the uploaded file: {e}")
+        st.error(f"❌ Error reading CSV: {e}")
 
-# Feedback Section
-st.markdown("## 📬 Feedback & Suggestions")
-st.write("We would love your feedback to help improve this app!")
+# Feedback section
+st.markdown("---")
+st.markdown("### 📬 Feedback & Suggestions")
+st.markdown("We would love your feedback to help improve this app!")
+st.markdown("**🖇️ Submit your suggestions using this Google Form:**\n👉 [Open Feedback Form](https://docs.google.com/forms/d/e/1FAIpQLSca_xkR3UAPVOZKUwKa1X9MH_4lEftPgRh61UZt5M8J9izGKA/viewform?usp=sf_link)")
 
-st.markdown("📎 **Submit your suggestions using this Google Form:**")
-st.markdown("👉 [Open Feedback Form](https://docs.google.com/forms/d/e/1FAIpQLSca_xkR3UAPVOZKUwKa1X9MH_4lEftPgRh61UZt5M8J9izGKA/viewform)")
+st.markdown("**📋 Or copy the link below to share or paste manually:**")
+st.code("https://docs.google.com/forms/d/e/1FAIpQLSca_xkR3UAPVOZKUwKa1X9MH_4lEftPgRh61UZt5M8J9izGKA/viewform?usp=sf_link")
 
-st.markdown("📋 Or copy the link below to share or paste manually:")
-st.code("https://docs.google.com/forms/d/e/1FAIpQLSca_xkR3UAPVOZKUwKa1X9MH_4lEftPgRh61UZt5M8J9izGKA/viewform", language="text")
-
-st.info("Feedback summary not available. Please check Google Sheet connection.")
-
+# Sheet-based feedback summary (coming soon)
+st.warning("Feedback summary not available. Please check Google Sheet connection.")
