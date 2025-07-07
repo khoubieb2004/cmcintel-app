@@ -13,14 +13,6 @@ CMCIntel is a lightweight, AI-powered regulatory writing assistant designed to s
 
 ---
 
-## 📸 Interface Preview
-
-| Single Entry Form | Batch Upload Mode |
-|-------------------|-------------------|
-| ![Screenshot1](path/to/screenshot1.png) | ![Screenshot2](path/to/screenshot2.png) |
-
----
-
 ## 🛠 How It Works
 
 1. You enter the:
